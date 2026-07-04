@@ -13,3 +13,6 @@ coverage.xml
 .nox/
 docs/_build/
 runs/
+
+# secretos locales
+.pypirc
