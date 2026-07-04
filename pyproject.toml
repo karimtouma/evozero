@@ -1,0 +1,145 @@
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+# ─────────────────────────── Metadata (PEP 621 + PEP 639) ───────────────────────────
+[project]
+name = "evozero"
+dynamic = ["version"]
+description = "GPU-native evolutionary computation: evolve formulas (symbolic regression) and learning algorithms (AutoML-Zero) from zero."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Karim Touma", email = "ktouma@deacero.com" }]
+keywords = [
+    "symbolic-regression", "genetic-programming", "automl",
+    "evolutionary-computation", "pytorch", "gpu", "equation-discovery",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+# torch is the engine but is NOT variant-pinned here (default = CPU wheel from PyPI).
+# GPU acceleration is selected via the [cuda] extra + the PyTorch index (see [tool.uv]).
+dependencies = [
+    "numpy>=1.24",
+    "sympy>=1.12",
+    "torch>=2.4",
+]
+
+[project.optional-dependencies]
+cuda = ["torch>=2.4"]
+dashboard = ["pandas>=2.0"]
+sklearn = ["scikit-learn>=1.4"]
+all = ["evozero[dashboard,sklearn]"]
+
+[project.urls]
+Homepage = "https://github.com/karimtouma/evozero"
+Documentation = "https://evozero.readthedocs.io"
+Repository = "https://github.com/karimtouma/evozero"
+Changelog = "https://github.com/karimtouma/evozero/blob/main/CHANGELOG.md"
+Issues = "https://github.com/karimtouma/evozero/issues"
+
+[project.scripts]
+evozero = "evozero.cli:main"
+
+# ─────────────────────────── Dev dependency groups (PEP 735) ───────────────────────────
+[dependency-groups]
+test = ["pytest>=8.0", "pytest-cov>=5.0", "hypothesis>=6.100"]
+lint = ["ruff>=0.6"]
+type = ["mypy>=1.11"]
+docs = ["sphinx>=7.0", "numpydoc>=1.7", "pydata-sphinx-theme>=0.15", "sphinx-autodoc-typehints>=2.0"]
+dev = [
+    "nox>=2024.4",
+    "pre-commit>=3.7",
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "type" },
+]
+
+# ─────────────────────────── Dynamic version from git tags ───────────────────────────
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/evozero/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/evozero"]
+# Non-.py data files under the package (e.g. dashboard/_static/index.html) are
+# included automatically because they are tracked and live inside the package.
+
+[tool.hatch.build.targets.sdist]
+include = ["src/evozero", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]
+
+# ─────────────────────────── uv: environment + torch index ───────────────────────────
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cu128", marker = "sys_platform != 'darwin' and extra == 'cuda'" },
+]
+
+# ─────────────────────────── Ruff (lint + format) ───────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RET", "PTH", "NPY", "PERF", "RUF", "D"]
+ignore = ["D105", "D107", "D203", "D213"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "ANN"]
+"examples/**" = ["D", "B018"]
+"src/evozero/core/_*_engine.py" = ["ALL"]  # vendored engines: keep verbatim
+
+# ─────────────────────────── mypy ───────────────────────────
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/evozero"]
+exclude = ["src/evozero/core/_.*_engine.py"]
+
+[[tool.mypy.overrides]]
+module = ["torch.*", "sympy.*", "pandas.*", "sklearn.*"]
+ignore_missing_imports = true
+
+# ─────────────────────────── pytest ───────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "gpu: requires a CUDA-capable device (skipped automatically if unavailable)",
+    "slow: long-running (excluded from default CI run)",
+]
+
+# ─────────────────────────── coverage ───────────────────────────
+[tool.coverage.run]
+branch = true
+source = ["evozero"]
+omit = ["*/_version.py", "*/core/_*_engine.py"]
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@overload"]

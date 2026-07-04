@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: "evozero: GPU-native evolutionary computation for symbolic regression and AutoML-Zero"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - given-names: Karim
+    family-names: Touma
+    email: ktouma@deacero.com
+repository-code: "https://github.com/karimtouma/evozero"
+url: "https://evozero.readthedocs.io"
+license: Apache-2.0
+keywords:
+  - symbolic regression
+  - genetic programming
+  - automl-zero
+  - evolutionary computation
+  - gpu
