@@ -430,6 +430,9 @@ def run_population(codes, consts, X, ps, device, chunk=512):
     P, L = codes.shape
     N = X.shape[1]
     D = L // 2 + 2
+    # auto-acota el chunk para que la pila [D, chunk, N] quepa (evita OOM con N grande)
+    _budget = 1_500_000_000  # ~1.5 GB de working set para la pila
+    chunk = max(1, min(chunk, _budget // (max(D, 1) * max(N, 1) * 4)))
     arity_t = torch.tensor(ps.arity, dtype=torch.long, device=device)
     yhat = torch.empty((P, N), dtype=torch.float32, device=device)
     codes_t_full = torch.from_numpy(codes).to(device)
@@ -634,6 +637,80 @@ def optimize_constants(inds, ps, Xtr_t, ytr_t, device, rng, trials=48, rounds=3,
     return out
 
 
+def _eval_expr_grad(code, ps, theta, X):
+    """Evaluacion DIFERENCIABLE de UNA expresion prefija.
+    theta = [n_consts] tensor con los valores de las constantes CONST en orden prefijo;
+    X = [n_vars, N]. Devuelve yhat [N] con grafo de autograd sobre theta."""
+    named = ps.named_vals
+    ci = [0]
+
+    def rec(i):
+        c = code[i]
+        nxt = i + 1
+        if c == ps.CONST:
+            k = ci[0]
+            ci[0] += 1
+            return theta[k], nxt
+        if c in named:
+            return X.new_tensor(float(named[c])), nxt
+        if 1 <= c <= ps.n_vars:
+            return X[c - 1], nxt
+        name = ps.code2name[c]
+        if int(ps.arity[c]) == 1:
+            v, nxt = rec(nxt)
+            return _apply_unary(name, v), nxt
+        v1, nxt = rec(nxt)
+        v2, nxt = rec(nxt)
+        return _apply_binary(name, v1, v2), nxt  # prefijo "op A B" -> op(A, B)
+
+    y, _ = rec(0)
+    return y
+
+
+def local_optimize_constants(inds, ps, Xtr_t, ytr_t, device, steps=20):
+    """Optimizacion LOCAL de constantes por gradiente (LBFGS a traves del interprete
+    diferenciable), con linear scaling en forma cerrada. Es la palanca que iguala la
+    eficiencia-por-evaluacion de Operon (que hace lo mismo con SGD/Levenberg)."""
+    y = ytr_t
+    ybar = y.mean()
+    yc = y - ybar
+    out = []
+    with torch.enable_grad():
+        for code, const in inds:
+            cpos = [j for j, c in enumerate(code) if c == ps.CONST]
+            if not cpos:
+                out.append((list(code), list(const)))
+                continue
+            theta = torch.tensor([float(const[j]) for j in cpos], dtype=torch.float32,
+                                 device=device, requires_grad=True)
+            opt = torch.optim.LBFGS([theta], max_iter=steps, line_search_fn="strong_wolfe")
+
+            def closure(_code=code, _theta=theta):
+                opt.zero_grad()
+                yhat = _eval_expr_grad(_code, ps, _theta, Xtr_t)
+                yhat = torch.nan_to_num(yhat, nan=0.0, posinf=1e6, neginf=-1e6)
+                fbar = yhat.mean()
+                fc = yhat - fbar
+                a = (fc * yc).sum() / ((fc * fc).sum() + 1e-12)
+                b = ybar - a * fbar
+                loss = ((a * yhat + b - y) ** 2).mean()
+                loss = torch.nan_to_num(loss, nan=1e18, posinf=1e18, neginf=1e18)
+                loss.backward()
+                return loss
+
+            try:
+                opt.step(closure)
+            except Exception:
+                pass
+            tv = theta.detach().cpu().numpy()
+            newk = list(const)
+            for k, j in enumerate(cpos):
+                v = float(tv[k])
+                newk[j] = v if np.isfinite(v) else float(const[j])
+            out.append((list(code), newk))
+    return out
+
+
 def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
            max_len=40, max_depth=9, tournament=6, cx_prob=0.7, mut_prob=0.35,
            elite=4, init_depth=4, cw=0.006, gap_pen=0.5, nest_pen=0.3, seed=0,
@@ -735,8 +812,7 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
         # --- OPTIMIZACION DE CONSTANTES sobre los mejores (palanca de R2) ---
         if const_opt_interval and gen % const_opt_interval == 0:
             order = np.argsort(eff_val)[:min(const_opt_top, len(flat))]
-            opt = optimize_constants([flat[i] for i in order], ps, Xtr_t, ytr_t,
-                                     device, rng, trials=const_opt_trials)
+            opt = local_optimize_constants([flat[i] for i in order], ps, Xtr_t, ytr_t, device)
             ao, bo, mto, rto, mvo, rvo = eval_flat(opt)
             for idx, pos in enumerate(order):
                 if mvo[idx] < eff_val[pos] - 1e-12:

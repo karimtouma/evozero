@@ -6,6 +6,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 <!-- towncrier release notes start -->
 
+## [Unreleased]
+
+### Added
+
+- `benchmarks/` — an **honest** head-to-head SR benchmark (evozero vs Operon / PySR /
+  gplearn) with `BENCHMARK.md`. Finding: evozero ties the CPU tools on small data and
+  **loses to Operon at N ≥ 10⁵**; it is not the fastest SR tool.
+
+### Changed
+
+- Local constant optimization is now **gradient-based** (LBFGS through the differentiable
+  interpreter), replacing the perturbation ES — better per-evaluation search quality.
+
+### Fixed
+
+- Memory-safe **auto-chunking** of the tensorized interpreter stack (avoids one OOM
+  source on large `N`).
+
 ## [0.1.0] - 2026-07-04
 
 ### Added
