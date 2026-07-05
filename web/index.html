@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>evozero — GPU-native evolutionary computation</title>
+<meta name="description" content="Evolve interpretable formulas (symbolic regression) and learning algorithms (AutoML-Zero) from zero, on the GPU. Open source, Apache-2.0.">
+<meta property="og:title" content="evozero — GPU-native evolutionary computation">
+<meta property="og:description" content="Discover interpretable equations from your data, and even evolve the learning algorithm itself.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://github.com/karimtouma/evozero">
+<style>html,body{margin:0;padding:0;background:#0d1014}</style>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#0d1014; --panel:#141a21; --panel-2:#10151b; --edge:#232c37;
+    --ink:#e7edf3; --mut:#8b96a5; --faint:#586372;
+    --accent:#2dd4bf; --accent-deep:#178f80; --amber:#f5b642;
+    --grid:#1a212b; --cloud:rgba(139,150,165,.28);
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --maxw:1120px;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f6f8f6; --panel:#ffffff; --panel-2:#f0f3f1; --edge:#dde3df;
+      --ink:#131a20; --mut:#586472; --faint:#8a96a0;
+      --accent:#0e9c8e; --accent-deep:#0b7a6f; --amber:#b5731a;
+      --grid:#e7ece8; --cloud:rgba(90,100,114,.30);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1014; --panel:#141a21; --panel-2:#10151b; --edge:#232c37;
+    --ink:#e7edf3; --mut:#8b96a5; --faint:#586372;
+    --accent:#2dd4bf; --accent-deep:#178f80; --amber:#f5b642;
+    --grid:#1a212b; --cloud:rgba(139,150,165,.28);
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f8f6; --panel:#ffffff; --panel-2:#f0f3f1; --edge:#dde3df;
+    --ink:#131a20; --mut:#586472; --faint:#8a96a0;
+    --accent:#0e9c8e; --accent-deep:#0b7a6f; --amber:#b5731a;
+    --grid:#e7ece8; --cloud:rgba(90,100,114,.30);
+  }
+
+  *{box-sizing:border-box}
+  .ez{background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased;letter-spacing:.005em}
+  .ez ::selection{background:var(--accent);color:#04110f}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  .mono{font-family:var(--font-mono)}
+  .eyebrow{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--accent);font-weight:600}
+  a{color:inherit}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+
+  /* ── top bar ── */
+  .bar{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);
+    background:color-mix(in srgb,var(--bg) 82%,transparent);
+    border-bottom:1px solid var(--edge)}
+  .bar .wrap{display:flex;align-items:center;gap:22px;height:60px}
+  .brand{font-family:var(--font-mono);font-weight:600;font-size:1.02rem;letter-spacing:-.01em;
+    display:flex;align-items:center;gap:9px}
+  .brand .gene{width:11px;height:11px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,var(--accent),var(--accent-deep));
+    box-shadow:0 0 12px color-mix(in srgb,var(--accent) 60%,transparent)}
+  .nav{margin-left:auto;display:flex;gap:26px;align-items:center;font-size:.92rem}
+  .nav a{color:var(--mut);text-decoration:none;transition:color .15s}
+  .nav a:hover{color:var(--ink)}
+  .nav .pill{color:var(--ink);border:1px solid var(--edge);padding:7px 14px;border-radius:8px;
+    font-family:var(--font-mono);font-size:.83rem;transition:border-color .15s,background .15s}
+  .nav .pill:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+  @media (max-width:680px){.nav .hideit{display:none}}
+
+  /* ── hero ── */
+  .hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:52px;align-items:center;
+    padding-top:72px;padding-bottom:64px}
+  @media (max-width:900px){.hero .wrap{grid-template-columns:1fr;gap:36px;padding-top:48px}}
+  h1{font-size:clamp(2.3rem,5.4vw,3.7rem);line-height:1.04;font-weight:650;
+    letter-spacing:-.025em;text-wrap:balance;margin:16px 0 0}
+  h1 .thin{color:var(--mut);font-weight:450}
+  .lead{font-size:1.14rem;color:var(--mut);max-width:34ch;margin:20px 0 0;text-wrap:pretty}
+  .lead b{color:var(--ink);font-weight:600}
+  .cmd{margin-top:30px;display:flex;align-items:stretch;gap:0;max-width:360px;
+    border:1px solid var(--edge);border-radius:10px;background:var(--panel-2);overflow:hidden}
+  .cmd code{font-family:var(--font-mono);font-size:.92rem;padding:13px 15px;flex:1;color:var(--ink)}
+  .cmd code .pr{color:var(--accent);user-select:none}
+  .cmd button{border:0;border-left:1px solid var(--edge);background:transparent;color:var(--mut);
+    font-family:var(--font-mono);font-size:.78rem;padding:0 15px;cursor:pointer;transition:color .15s,background .15s}
+  .cmd button:hover{color:var(--ink);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  .ctas{margin-top:22px;display:flex;gap:12px;flex-wrap:wrap}
+  .btn{font-family:var(--font-mono);font-size:.86rem;text-decoration:none;padding:10px 18px;border-radius:9px;
+    display:inline-flex;align-items:center;gap:8px;transition:transform .12s,box-shadow .15s,background .15s}
+  .btn.primary{background:var(--accent);color:#03130f;font-weight:600;
+    box-shadow:0 0 0 1px var(--accent),0 8px 26px -12px color-mix(in srgb,var(--accent) 80%,transparent)}
+  .btn.primary:hover{transform:translateY(-1px)}
+  .btn.ghost{color:var(--ink);border:1px solid var(--edge)}
+  .btn.ghost:hover{border-color:var(--accent)}
+
+  /* ── the discovery surface (hero canvas panel) ── */
+  .surface{border:1px solid var(--edge);border-radius:14px;background:
+    linear-gradient(180deg,var(--panel),var(--panel-2));overflow:hidden;
+    box-shadow:0 30px 80px -50px rgba(0,0,0,.8)}
+  .surface .shead{display:flex;align-items:center;justify-content:space-between;
+    padding:11px 15px;border-bottom:1px solid var(--edge);font-family:var(--font-mono);
+    font-size:.72rem;letter-spacing:.06em;color:var(--faint);text-transform:uppercase}
+  .surface .shead .live{display:flex;align-items:center;gap:7px;color:var(--accent)}
+  .surface .shead .live i{width:7px;height:7px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 8px var(--accent);animation:pulse 1.8s infinite ease-in-out}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  canvas{display:block;width:100%;height:300px}
+  .surface .sfoot{padding:13px 16px;border-top:1px solid var(--edge);
+    font-family:var(--font-mono);font-size:.9rem;display:flex;align-items:baseline;
+    justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .surface .sfoot .eq{color:var(--ink)}
+  .surface .sfoot .eq .op{color:var(--accent)}
+  .surface .sfoot .r2{color:var(--amber);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* ── section frame ── */
+  section{padding:64px 0;border-top:1px solid var(--edge)}
+  .sectlabel{display:flex;align-items:center;gap:14px;margin-bottom:34px}
+  .sectlabel h2{font-size:1.5rem;font-weight:620;letter-spacing:-.02em;margin:0}
+  .sectlabel .rule{flex:1;height:1px;background:var(--edge)}
+  .sectlabel .idx{font-family:var(--font-mono);font-size:.75rem;color:var(--faint)}
+
+  /* ── engines: instrument panels ── */
+  .engines{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  @media (max-width:860px){.engines{grid-template-columns:1fr}}
+  .panel{border:1px solid var(--edge);border-radius:12px;background:var(--panel);padding:22px 20px 24px;
+    position:relative;transition:border-color .18s,transform .18s}
+  .panel:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--edge));transform:translateY(-2px)}
+  .panel .tag{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--faint)}
+  .panel h3{font-size:1.14rem;margin:12px 0 8px;font-weight:600;letter-spacing:-.01em}
+  .panel h3 .k{font-family:var(--font-mono);color:var(--accent);font-size:.95rem}
+  .panel p{color:var(--mut);font-size:.95rem;margin:0}
+  .panel .foot{margin-top:16px;font-family:var(--font-mono);font-size:.8rem;color:var(--ink);
+    display:flex;align-items:center;gap:7px}
+  .panel .foot .arrow{color:var(--accent)}
+
+  /* ── how it works ── */
+  .how{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center}
+  @media (max-width:860px){.how{grid-template-columns:1fr;gap:28px}}
+  .how p{color:var(--mut);font-size:1.02rem;margin:0 0 14px}
+  .how p b{color:var(--ink)}
+  .flow{border:1px solid var(--edge);border-radius:12px;background:var(--panel-2);padding:20px;
+    font-family:var(--font-mono);font-size:.82rem;color:var(--mut)}
+  .flow .row{display:flex;align-items:center;gap:10px;padding:9px 0}
+  .flow .row + .row{border-top:1px dashed var(--edge)}
+  .flow .chip{color:var(--ink);background:color-mix(in srgb,var(--accent) 12%,transparent);
+    border:1px solid color-mix(in srgb,var(--accent) 40%,var(--edge));border-radius:6px;padding:3px 9px;white-space:nowrap}
+  .flow .chip.gpu{color:var(--accent);border-color:var(--accent)}
+  .flow .to{color:var(--faint)}
+
+  /* ── code example ── */
+  .term{border:1px solid var(--edge);border-radius:12px;overflow:hidden;background:var(--panel-2)}
+  .term .dots{display:flex;gap:7px;padding:13px 16px;border-bottom:1px solid var(--edge)}
+  .term .dots i{width:11px;height:11px;border-radius:50%;background:var(--edge)}
+  .term .dots .f{background:color-mix(in srgb,var(--faint) 60%,var(--edge))}
+  .term pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--font-mono);
+    font-size:.86rem;line-height:1.7;color:var(--ink)}
+  .term .c{color:var(--faint)}
+  .term .kw{color:var(--accent)}
+  .term .st{color:var(--amber)}
+  .term .fn{color:color-mix(in srgb,var(--accent) 70%,var(--ink))}
+  .term .out{color:var(--mut)}
+
+  /* ── stats ── */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  @media (max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{border:1px solid var(--edge);border-radius:12px;padding:22px 18px;background:var(--panel)}
+  .stat .n{font-family:var(--font-mono);font-size:1.9rem;font-weight:600;letter-spacing:-.02em;
+    color:var(--ink);font-variant-numeric:tabular-nums}
+  .stat .n .u{color:var(--accent);font-size:1.1rem}
+  .stat .l{color:var(--mut);font-size:.86rem;margin-top:6px}
+
+  /* ── footer ── */
+  footer{border-top:1px solid var(--edge);padding:52px 0 46px}
+  .foot-grid{display:flex;justify-content:space-between;align-items:flex-start;gap:30px;flex-wrap:wrap}
+  .foot-cmd{font-family:var(--font-mono);font-size:.92rem;color:var(--ink);
+    border:1px solid var(--edge);border-radius:9px;padding:11px 15px;background:var(--panel-2)}
+  .foot-cmd .pr{color:var(--accent)}
+  .foot-links{display:flex;gap:24px;font-family:var(--font-mono);font-size:.86rem}
+  .foot-links a{color:var(--mut);text-decoration:none}
+  .foot-links a:hover{color:var(--accent)}
+  .colophon{margin-top:34px;color:var(--faint);font-size:.82rem;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  .colophon .dot{width:4px;height:4px;border-radius:50%;background:var(--faint)}
+</style>
+
+<div class="ez">
+  <!-- top bar -->
+  <div class="bar"><div class="wrap">
+    <div class="brand"><span class="gene"></span>evozero</div>
+    <nav class="nav">
+      <a class="hideit" href="https://evozero.readthedocs.io">Docs</a>
+      <a class="hideit" href="https://pypi.org/project/evozero/">PyPI</a>
+      <a class="pill" href="https://github.com/karimtouma/evozero">GitHub ↗</a>
+    </nav>
+  </div></div>
+
+  <!-- hero -->
+  <div class="hero"><div class="wrap">
+    <div>
+      <span class="eyebrow">GPU-native evolutionary computation</span>
+      <h1>Evolve formulas<br>and learning algorithms<br><span class="thin">from zero.</span></h1>
+      <p class="lead">A GPU-accelerated toolkit that discovers <b>interpretable equations</b>
+        from your data — and can even evolve the <b>learning algorithm itself</b>.</p>
+      <div class="cmd">
+        <code><span class="pr">$ </span>pip install evozero</code>
+        <button id="copyBtn" aria-label="Copy install command">copy</button>
+      </div>
+      <div class="ctas">
+        <a class="btn primary" href="https://pypi.org/project/evozero/">Get started</a>
+        <a class="btn ghost" href="https://github.com/karimtouma/evozero">★ Star on GitHub</a>
+      </div>
+    </div>
+
+    <div class="surface">
+      <div class="shead"><span>accuracy × complexity</span>
+        <span class="live"><i></i>discovering</span></div>
+      <canvas id="pareto" width="600" height="300" role="img"
+        aria-label="A Pareto front of candidate equations by complexity and R-squared, converging on the exact formula."></canvas>
+      <div class="sfoot">
+        <span class="eq">y = x&#8320;<span class="op">(</span>x&#8320; + x&#8321;<span class="op">)</span> + sin<span class="op">(</span>x&#8321;<span class="op">)</span></span>
+        <span class="r2">R&sup2; = 1.0000</span>
+      </div>
+    </div>
+  </div></div>
+
+  <!-- engines -->
+  <section><div class="wrap">
+    <div class="sectlabel"><h2>Three engines, one tensorized core</h2><span class="rule"></span>
+      <span class="idx">01 — 03</span></div>
+    <div class="engines">
+      <div class="panel">
+        <div class="tag">Symbolic regression</div>
+        <h3><span class="k">SymbolicRegressor</span></h3>
+        <p>Discovers an interpretable equation <span class="mono">y = f(X)</span> — an open take
+          on Eureqa. Island-model genetic programming with a full accuracy-vs-complexity Pareto front.</p>
+        <div class="foot"><span class="arrow">→</span> fit · predict · to_latex</div>
+      </div>
+      <div class="panel">
+        <div class="tag">AutoML-Zero</div>
+        <h3><span class="k">LearnerSearch</span></h3>
+        <p>Evolves the learning algorithm itself — <span class="mono">Setup / Predict / Learn</span>
+          over a typed-register VM — meta-trained across tasks so it generalizes to unseen problems.</p>
+        <div class="foot"><span class="arrow">→</span> learning to learn</div>
+      </div>
+      <div class="panel">
+        <div class="tag">Live view</div>
+        <h3><span class="k">launch_dashboard</span></h3>
+        <p>Watch the search unfold in a dependency-free web dashboard: the Pareto cloud, the
+          convergence curve, and the predicted-vs-actual fit of any solution.</p>
+        <div class="foot"><span class="arrow">→</span> stdlib only, zero deps</div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- how it works -->
+  <section><div class="wrap">
+    <div class="sectlabel"><h2>Why it&rsquo;s fast</h2><span class="rule"></span><span class="idx">the core</span></div>
+    <div class="how">
+      <div>
+        <p>Genetic programming spends its time <b>evaluating candidate expressions</b>. evozero
+          stores each as a padded postfix program and evaluates the <b>whole population against
+          the whole dataset as one batched tensor operation</b> on the GPU.</p>
+        <p>The evolutionary bookkeeping stays on the CPU; only the expensive fitness pass goes to
+          the GPU. Linear scaling, island migration, stagnation restarts and constant optimization
+          keep the search from stalling. And <b><span class="mono">import evozero</span> never imports
+          torch</b> — export to LaTeX and NumPy works with no GPU at all.</p>
+      </div>
+      <div class="flow">
+        <div class="row"><span class="chip">population · trees</span><span class="to">→ postfix</span></div>
+        <div class="row"><span class="to">CPU</span><span class="chip">select · crossover · mutate</span></div>
+        <div class="row"><span class="to">GPU</span><span class="chip gpu">batched fitness [P × N]</span></div>
+        <div class="row"><span class="chip">Pareto front</span><span class="to">→ y = f(X)</span></div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- code -->
+  <section><div class="wrap">
+    <div class="sectlabel"><h2>Five lines to a formula</h2><span class="rule"></span><span class="idx">quickstart</span></div>
+    <div class="term">
+      <div class="dots"><i class="f"></i><i class="f"></i><i class="f"></i></div>
+<pre><span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">from</span> evozero <span class="kw">import</span> SymbolicRegressor
+
+X = np.random.randn(<span class="st">500</span>, <span class="st">2</span>)
+y = X[:, <span class="st">0</span>] ** <span class="st">2</span> + X[:, <span class="st">0</span>] * X[:, <span class="st">1</span>] + np.<span class="fn">sin</span>(X[:, <span class="st">1</span>])
+
+model = <span class="fn">SymbolicRegressor</span>(device=<span class="st">"auto"</span>, random_state=<span class="st">0</span>).<span class="fn">fit</span>(X, y)
+<span class="fn">print</span>(model.best_equation_)   <span class="c"># x0*(x0 + x1) + sin(x1)</span>
+<span class="fn">print</span>(model.<span class="fn">to_latex</span>())        <span class="c"># -> LaTeX for your paper</span>
+
+<span class="out">&gt;&gt;&gt; R&sup2; = 1.0  ·  device = cuda:0  ·  x2 correctly ignored</span></pre>
+    </div>
+  </div></section>
+
+  <!-- stats -->
+  <section><div class="wrap">
+    <div class="sectlabel"><h2>Verified, not promised</h2><span class="rule"></span><span class="idx">on an H100</span></div>
+    <div class="stats">
+      <div class="stat"><div class="n">1.0<span class="u"> R&sup2;</span></div>
+        <div class="l">Rediscovers <span class="mono">x&#8320;(x&#8320;+x&#8321;)+sin(x&#8321;)</span> exactly</div></div>
+      <div class="stat"><div class="n">34<span class="u">×</span></div>
+        <div class="l">GPU vs CPU node-eval throughput</div></div>
+      <div class="stat"><div class="n">0<span class="u"> deps</span></div>
+        <div class="l"><span class="mono">import evozero</span> never imports torch</div></div>
+      <div class="stat"><div class="n">Apache<span class="u"> 2.0</span></div>
+        <div class="l">Open source · on PyPI</div></div>
+    </div>
+  </div></section>
+
+  <!-- footer -->
+  <footer><div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="brand" style="margin-bottom:14px"><span class="gene"></span>evozero</div>
+        <div class="foot-cmd"><span class="pr">$ </span>pip install evozero</div>
+      </div>
+      <div class="foot-links">
+        <a href="https://pypi.org/project/evozero/">PyPI</a>
+        <a href="https://github.com/karimtouma/evozero">GitHub</a>
+        <a href="https://evozero.readthedocs.io">Docs</a>
+      </div>
+    </div>
+    <div class="colophon">
+      <span>Evolve formulas and learning algorithms from zero.</span><span class="dot"></span>
+      <span>GPU-native evolutionary computation.</span><span class="dot"></span>
+      <span>Apache-2.0 &copy; Karim Touma</span>
+    </div>
+  </div></footer>
+</div>
+
+<script>
+(function(){
+  // clipboard
+  var btn=document.getElementById('copyBtn');
+  if(btn){btn.addEventListener('click',function(){
+    navigator.clipboard&&navigator.clipboard.writeText('pip install evozero');
+    var t=btn.textContent;btn.textContent='copied';setTimeout(function(){btn.textContent=t;},1400);
+  });}
+
+  // discovery surface — the Pareto front
+  var cv=document.getElementById('pareto');if(!cv)return;
+  var ctx=cv.getContext('2d');
+  var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+  var front=[[1,0.03],[2,0.45],[3,0.55],[4,0.75],[5,0.97],[8,1.0]];
+  var cloud=[];(function(){ // scattered dominated candidates
+    var seed=7;function r(){seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff;}
+    for(var i=0;i<150;i++){var c=1+Math.floor(r()*11);var top=Math.min(1,0.06+c*0.11);
+      cloud.push([c, Math.max(-0.05, top - r()*(0.15+top*0.9))]);}
+  })();
+  var W,H,dpr,m={l:40,r:16,t:16,b:26};
+  function resize(){dpr=window.devicePixelRatio||1;var r=cv.getBoundingClientRect();
+    W=r.width;H=r.height;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);}
+  var XMAX=12,YMIN=-0.1,YMAX=1.06;
+  function px(x,y){return [m.l+(W-m.l-m.r)*(x/XMAX),
+    m.t+(H-m.t-m.b)*(1-(y-YMIN)/(YMAX-YMIN))];}
+  function frame(prog){
+    var ink=css('--ink'),mut=css('--faint'),acc=css('--accent'),amb=css('--amber'),
+        grid=css('--grid'),cl=css('--cloud');
+    ctx.clearRect(0,0,W,H);
+    ctx.font='10px ui-monospace,Menlo,monospace';
+    // grid + y ticks
+    ctx.strokeStyle=grid;ctx.fillStyle=mut;ctx.lineWidth=1;
+    for(var i=0;i<=4;i++){var yy=Math.round(m.t+(H-m.t-m.b)*i/4)+.5;var v=YMAX-(YMAX-YMIN)*i/4;
+      ctx.beginPath();ctx.moveTo(m.l,yy);ctx.lineTo(W-m.r,yy);ctx.stroke();
+      ctx.fillText(v.toFixed(1),6,yy+3);}
+    ctx.fillText('R²',6,m.t+9);
+    ctx.fillText('complexity →',W-m.r-70,H-8);
+    // cloud
+    ctx.fillStyle=cl;
+    for(var j=0;j<cloud.length;j++){if(j/cloud.length>prog*1.4)continue;
+      var q=px(cloud[j][0],cloud[j][1]);ctx.beginPath();ctx.arc(q[0],q[1],1.9,0,6.283);ctx.fill();}
+    // frontier line (drawn progressively)
+    var n=front.length, shown=Math.max(1,Math.floor(prog*(n)));
+    ctx.strokeStyle=acc;ctx.lineWidth=2;ctx.beginPath();
+    for(var k=0;k<shown;k++){var p=px(front[k][0],front[k][1]);k?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);}
+    ctx.stroke();
+    // frontier points
+    for(var k2=0;k2<shown;k2++){var pp=px(front[k2][0],front[k2][1]);
+      var best=(k2===n-1);
+      ctx.fillStyle=best?amb:acc;ctx.beginPath();ctx.arc(pp[0],pp[1],best?5:3.4,0,6.283);ctx.fill();
+      if(best&&prog>=1){ctx.strokeStyle=amb;ctx.globalAlpha=.5;ctx.lineWidth=2;
+        ctx.beginPath();ctx.arc(pp[0],pp[1],9,0,6.283);ctx.stroke();ctx.globalAlpha=1;}
+    }
+  }
+  var start=null,DUR=2200;
+  function tick(ts){if(!start)start=ts;var t=Math.min(1,(ts-start)/DUR);
+    var e=1-Math.pow(1-t,3);frame(e);if(t<1)requestAnimationFrame(tick);}
+  function run(){resize();if(reduce){frame(1);}else{start=null;requestAnimationFrame(tick);}}
+  run();
+  var ro;try{ro=new ResizeObserver(function(){resize();frame(1);});ro.observe(cv);}catch(e){}
+  window.addEventListener('resize',function(){resize();frame(1);});
+})();
+</script>
+
+</body>
+</html>
