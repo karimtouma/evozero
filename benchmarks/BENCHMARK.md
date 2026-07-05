@@ -1,87 +1,111 @@
 # Benchmark: evozero vs Operon / PySR / gplearn
 
-**Honest, head-to-head symbolic regression benchmark. TL;DR: at the small `N` where SR
-usually operates, the mature CPU tools (Operon, PySR) are excellent and evozero holds no
-practical edge. At large `N`, case subsampling lets evozero match their R² (= 1.0) while
-staying memory-flat (~1.4 GB) and wall-clock faster — but that edge comes from subsampling,
-which the CPU tools could also adopt, not from a faster core search.** We publish this whether
-or not it flatters evozero — a benchmark that only appears when you win is marketing, not
-evidence.
+**Honest, head-to-head symbolic regression benchmark. TL;DR: on equal hardware the mature CPU
+tools (Operon C++/SIMD, PySR Julia) clearly beat evozero. On CPU with full data evozero scores
+R² 0.994 / 0.867 at N = 10⁴ / 10⁵ versus ~1.0 for Operon/PySR. evozero's apparent large-`N`
+speed advantage is an artifact of *subsampling* (which the CPU tools can also do) plus the GPU —
+not a better search.** We publish this whether or not it flatters evozero — a benchmark that only
+appears when you win is marketing, not evidence.
 
-## Methodology (fair by construction)
+## Methodology
 
 - **Same everything:** identical operators (`+ - * / sin cos`), identical `max_size = 30`,
   identical wall-clock budget, identical data, same train/test split.
-- **CPU gets the hardware:** Operon/PySR/gplearn run with 32 threads on the H100 box's
-  192-core CPU. evozero runs on one H100.
 - **Native precision:** data is float64 (native for Operon/PySR — they degrade badly on
   float32). evozero casts to float32 internally by design — an honest, minor disadvantage.
-- **Warmup excluded:** one discarded `fit()` per method pays Julia JIT / CUDA compile
-  off-clock.
+- **Warmup excluded:** one discarded `fit()` per method pays Julia JIT / CUDA compile off-clock.
 - **Metric:** best **test R²** reached within the budget; median over seeds.
-- Problem: `y = x0² + x0·x1 + sin(x1)` (ground-truth, exactly recoverable), swept over
-  dataset size `N`. Reproduce with `benchmarks/benchmark.py`.
+- Problem: `y = x0² + x0·x1 + sin(x1)` (ground-truth, exactly recoverable), swept over `N`.
+- Reproduce: `benchmarks/benchmark.py` (main sweep), `bench_large_n.py` (large-N + peak memory),
+  `fair_compare.py` (the hardware/technique-controlled decomposition below).
 
-## Results — test R² (median over seeds, fp64 data), wall time in parens
+## 1. Raw head-to-head (as first published)
 
-Small/medium `N` at a 30 s budget (2 seeds); the 10⁵/10⁶ rows are **re-measured** at a 60 s
-budget (3 seeds) after case subsampling landed — that is where the picture changed.
+evozero on **one H100**; Operon/PySR/gplearn on **32 CPU threads**. Test R² (median), fp64.
+Small/medium `N` at 30 s; the 10⁵/10⁶ rows at 60 s after case subsampling landed.
 
 | N (rows)  | evozero (GPU)             | Operon (CPU)   | PySR (CPU)    | gplearn (CPU) |
 |-----------|:------------------------:|:--------------:|:-------------:|:-------------:|
 | 1 000     | 1.000                    | 1.000          | 1.000         | 1.000         |
 | 10 000    | 1.000                    | 1.000          | 1.000         | 1.000         |
-| 100 000   | **1.000** (5–8 s)        | 0.99999 (60 s) | 1.000 (67 s)  | —             |
-| 1 000 000 | **1.000** (7–8 s, 1.4 GB)| 0.99986 (60 s) | 1.000 (163 s) | —             |
+| 100 000   | 1.000 (5–8 s)            | 0.99999 (60 s) | 1.000 (67 s)  | —             |
+| 1 000 000 | 1.000 (7–8 s, ~1.4 GB)   | 0.99986 (60 s) | 1.000 (163 s) | —             |
 
-The large-`N` rows changed markedly from the first run (evozero was ~0.995 at 10⁵ and **OOM**ed
-at 10⁶). With **case subsampling** (`subsample_size = 2048`, auto-on above `N ≈ 83k`; identical
-for tournament and DALex selection):
+At large `N` evozero looks fastest — **but this table mixes two confounds**: evozero runs on a
+GPU *and* subsamples to 2048 rows, while the CPU tools run on full data. Section 2 removes both
+confounds. It reverses the conclusion.
 
-- **No OOM, flat memory:** evozero evaluates fitness on a 2048-row subsample and never
-  materializes the `[P, N]` prediction tensor, so peak GPU memory is ~1.4 GB at *any* `N`.
-- **N-independent cost → fast at large N:** per-generation cost no longer grows with `N`, so
-  evozero reaches R² = 1.0 in **5–8 s at both 10⁵ and 10⁶**, while Operon/PySR pay a per-row
-  cost that grows with `N` (PySR needs 163 s at 10⁶). **Honest caveat:** this speed edge is a
-  property of *subsampling*, which the CPU tools could also adopt (PySR has a `batching`
-  option) — it is **not** evidence that evozero's core search is faster per evaluation.
+## 2. Fairness — decomposing the large-`N` result
+
+No competitor has a GPU backend (Operon/PySR/gplearn are CPU-only), so a literal "GPU vs GPU" is
+impossible. Instead we isolate the two advantages. Budget 30 s, 2 seeds, evozero `pop = 3000`.
+Reproduce with `benchmarks/fair_compare.py`.
+
+**A) CPU vs CPU — same hardware, same (full) data.** *Is evozero's search competitive?*
+
+| N (rows)  | evozero (CPU, full) | Operon (CPU)   | PySR (CPU)   |
+|-----------|:-------------------:|:--------------:|:------------:|
+| 10 000    | **0.994** (21 s)    | 0.99998 (30 s) | 1.000 (31 s) |
+| 100 000   | **0.867** (77 s)    | 0.99999 (30 s) | 1.000 (39 s) |
+
+On equal hardware evozero **loses clearly** — and at 10⁵ it cannot even hold the time budget
+(77 s), because evaluating a full-`N` population without the GPU is slow, so it completes very few
+generations. Its GP search is also less sample-efficient than Operon's (mature GP + local
+constant optimization). **No algorithmic advantage.**
+
+**B) evozero GPU vs CPU (subsampling on) — what the GPU actually buys evozero.**
+
+| N (rows)  | evozero (GPU, sub 2048) | evozero (CPU, sub 2048) |
+|-----------|:-----------------------:|:-----------------------:|
+| 100 000   | 1.000 (4 s, 0.8 GB)     | 0.996 (25 s)            |
+| 1 000 000 | 0.99996 (17 s, 0.8 GB)  | 0.995 (22 s)            |
+
+The GPU gives evozero ~5–6× throughput and better convergence on *its own* workload — but only
+brings it **up to** competitive, not past the CPU tools' search.
+
+**C) Subsampling isolation @ N = 10⁶ — give the CPU tools the SAME 2048 rows.**
+
+| method                    | test R²   | sec  |
+|---------------------------|:---------:|:----:|
+| evozero (GPU, sub 2048)   | 0.99996   | 17 s |
+| Operon (CPU, 2048 rows)   | **0.99999** | 30 s |
+| PySR (CPU, 2048 rows)     | **1.000** | 30 s |
+
+Given the same subsample, Operon and PySR **match or beat** evozero. This proves the caveat with
+data: **the large-`N` speed advantage was subsampling, not the GPU and not a better search.**
+Subsampling is a technique any tool can adopt (PySR ships a `batching` option).
 
 ## Honest conclusions
 
-1. **Small data (N ≤ 10⁴): everyone ties at R² = 1.0.** This is the regime where
-   symbolic regression usually operates (PySR itself recommends < 10⁴ points). Here the
-   optimized CPU tools are fully competitive — and **Operon reaches the exact solution in
-   under a second** when allowed to stop early. The GPU provides no practical advantage.
-2. **Medium data (N = 10⁵): now a tie.** With case subsampling evozero reaches R² = 1.0
-   (it was ~0.995 and overshot the budget before), matching PySR and edging Operon (0.99999),
-   in 5–8 s. The gap the first run exposed is closed on this target.
-3. **Large data (N = 10⁶): evozero used to OOM — now it is the fastest to R² = 1.0.** It
-   formerly materialized the whole population's predictions `[P, N]` (10⁴ × 10⁶ ≈ 40 GB) and
-   crashed. **Case subsampling + a streamed fitness reduction** hold peak memory flat at
-   ~1.4 GB and, because per-generation cost no longer scales with `N`, evozero solves in ~8 s
-   versus Operon (60 s, 0.99986) and PySR (163 s). But see the honest caveat above: that speed
-   comes from subsampling, a technique the CPU tools could also use.
+1. **On equal hardware, Operon and PySR beat evozero** (Section 2A): 0.994 / 0.867 vs ~1.0 at
+   N = 10⁴ / 10⁵. Karim's original skepticism holds — "GPU-native" is not intrinsically better,
+   and here the CPU tools' search is simply stronger.
+2. **The GPU helps evozero, but only to reach parity** (2B): ~5–6× faster than evozero-on-CPU,
+   yet still not better than the CPU competitors' algorithm.
+3. **The large-`N` "win" was subsampling** (2C): with the same 2048 rows the CPU tools match or
+   beat evozero. Case subsampling is real and useful (it removed the OOM and made evozero usable
+   at any `N`), but it is not a moat.
 
-**Bottom line:** at the small `N` where symbolic regression usually operates, the mature CPU
-tools (Operon C++/SIMD, PySR Julia) are excellent and **evozero holds no practical edge** —
-"GPU-native" is not intrinsically faster per evaluation. At large `N`, subsampling lets evozero
-match their R² while staying memory-flat and wall-clock faster, but that is a property of
-subsampling rather than a better core search. evozero's distinctive value remains being
-PyTorch-native, the scikit-learn API, GPU-native lexicase (DALex), and the AutoML-Zero engine.
+**Bottom line: evozero does not beat the best CPU symbolic-regression tools — on equal terms it
+loses.** Its value is *not* SR performance. It is being PyTorch-native (drop into a torch/CUDA
+stack, autograd constant optimization), the scikit-learn API, GPU-native lexicase selection
+(DALex, near-free on GPU), and the AutoML-Zero engine (no direct competitor). If you need the
+best symbolic regression today, use **Operon** (or **PySR** for production ergonomics).
 
-## What we changed after the first run
+## What we changed across runs
 
-- **Gradient local constant optimization** (LBFGS through the differentiable interpreter),
-  matching what Operon does — raised the first-run N = 10⁵ result from 0.99 to ~0.995.
-- **GPU-native lexicase selection (DALex)** — near-free on GPU; improves fit on
-  constants-heavy targets (see `CHANGELOG`).
-- **Case subsampling + streamed fitness reduction** — removed the large-`N` output-tensor OOM
-  entirely and made per-generation cost independent of `N`. This is what turned the 10⁵/10⁶
-  rows from *"loses / OOM"* into *"ties, memory-flat, fast."*
+- **Gradient local constant optimization** (LBFGS through the differentiable interpreter) —
+  raised the first-run N = 10⁵ result from 0.99 to ~0.995.
+- **GPU-native lexicase selection (DALex)** — near-free on GPU; helps on constants-heavy targets.
+- **Case subsampling + streamed fitness reduction** — removed the large-`N` OOM and made
+  per-generation cost independent of `N`. Genuinely useful, but Section 2 shows it is not a
+  competitive advantage over CPU tools that subsample too.
 
 ## Reproduce
 
 ```bash
 # on a machine with an NVIDIA GPU, after: pip install evozero pyoperon pysr gplearn
-JULIA_NUM_THREADS=32 python benchmarks/benchmark.py --budget 30 --seeds 5
+JULIA_NUM_THREADS=32 python benchmarks/benchmark.py --budget 30 --seeds 5   # main sweep
+python benchmarks/bench_large_n.py                                          # large-N + peak mem
+python benchmarks/fair_compare.py                                           # CPU-vs-CPU decomposition
 ```

@@ -33,9 +33,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   strategy improvement, not a victory claim.
 - `benchmarks/ab_selection.py` — isolated A/B that validated the DALex-vs-tournament lever.
 - `benchmarks/bench_large_n.py` — large-`N` head-to-head with peak-memory tracking. On the
-  canonical target (`x0²+x0·x1+sin(x1)`), with subsampling active evozero reaches **R² = 1.0
-  at N = 10⁵ and 10⁶ in 5–8 s at ~1.4 GB**, vs Operon (60 s, 0.99986 at 10⁶) and PySR (163 s) —
-  the large-`N` gap/OOM from the first benchmark is closed (see `BENCHMARK.md`).
+  canonical target (`x0²+x0·x1+sin(x1)`), with subsampling active evozero reaches R² = 1.0
+  at N = 10⁵ and 10⁶ in 5–8 s at ~1.4 GB (removes the OOM).
+- `benchmarks/fair_compare.py` — **hardware/technique-controlled** comparison that corrects the
+  above. On **equal (CPU) hardware with full data evozero loses clearly** (R² 0.994 / 0.867 at
+  N = 10⁴/10⁵ vs ~1.0 for Operon/PySR); the GPU only brings evozero to parity; and giving the CPU
+  tools the same 2048-row subsample lets them **match or beat** evozero. Conclusion: evozero does
+  not beat the CPU SR leaders — the large-`N` speed was subsampling + GPU, not a better search
+  (`BENCHMARK.md` §2).
 - `benchmarks/` — an **honest** head-to-head SR benchmark (evozero vs Operon / PySR /
   gplearn) with `BENCHMARK.md`. Finding: evozero ties the CPU tools on small data and
   **loses to Operon at N ≥ 10⁵**; it is not the fastest SR tool.
