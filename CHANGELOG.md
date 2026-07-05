@@ -10,6 +10,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- `benchmarks/automlzero_bench.py` + `AUTOMLZERO.md` — an **honest** AutoML-Zero search
+  benchmark on the training-steps axis (RandomSearch / (1+1)-ES / aging evolution, with an
+  FEC + Hurdles ablation). Finding: at single-machine scale the VM landscape is a sparse
+  plateau so evolution **ties** Random Search, but **FEC** is a measured win (higher fitness
+  at <½ the full evaluations; the full config reaches equal quality at 4.6× fewer evals).
 - **Case subsampling + memory-safe fitness reduction** — scales SR to large `N` without
   materializing the `[P, N]` prediction tensor. `SymbolicRegressor` gains `subsample_size`
   (auto `2048` above `subsample_threshold=50000`), `val_subsample_size`, `subsample_resample_interval`,
