@@ -7,15 +7,15 @@ interpreter + linear scaling + constant optimization + Pareto front).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 if TYPE_CHECKING:
-    import torch
     from numpy.typing import ArrayLike, NDArray
 
-__all__ = ["SymbolicRegressor", "Equation"]
+__all__ = ["Equation", "SymbolicRegressor"]
 
 # Public operator symbols -> engine primitive names.
 _BINARY_ALIASES = {"+": "add", "-": "sub", "*": "mul", "/": "div", "aq": "aq"}
@@ -43,8 +43,12 @@ class Equation:
         from ..core import _sr_engine as engine
 
         return engine.to_sympy(
-            self._entry["code"], self._entry["const"], self._ps,
-            self._entry["a"], self._entry["b"], simplify=simplify,
+            self._entry["code"],
+            self._entry["const"],
+            self._ps,
+            self._entry["a"],
+            self._entry["b"],
+            simplify=simplify,
         )
 
     def to_latex(self) -> str:
@@ -145,20 +149,34 @@ class SymbolicRegressor:
 
     def get_params(self, deep: bool = True) -> dict[str, Any]:
         """Return estimator parameters (scikit-learn compatible)."""
-        return {k: getattr(self, k) for k in (
-            "population_size", "n_islands", "migration_interval", "generations",
-            "max_time", "binary_operators", "unary_operators", "max_size",
-            "max_depth", "parsimony_coefficient", "restart_patience",
-            "const_opt_interval", "device", "random_state", "verbose",
-        )}
+        return {
+            k: getattr(self, k)
+            for k in (
+                "population_size",
+                "n_islands",
+                "migration_interval",
+                "generations",
+                "max_time",
+                "binary_operators",
+                "unary_operators",
+                "max_size",
+                "max_depth",
+                "parsimony_coefficient",
+                "restart_patience",
+                "const_opt_interval",
+                "device",
+                "random_state",
+                "verbose",
+            )
+        }
 
-    def set_params(self, **params: Any) -> "SymbolicRegressor":
+    def set_params(self, **params: Any) -> SymbolicRegressor:
         """Set estimator parameters (scikit-learn compatible)."""
         for key, value in params.items():
             setattr(self, key, value)
         return self
 
-    def fit(self, X: "ArrayLike", y: "ArrayLike", sample_weight: Any = None) -> "SymbolicRegressor":
+    def fit(self, X: ArrayLike, y: ArrayLike, sample_weight: Any = None) -> SymbolicRegressor:
         """Run the evolutionary search and store the discovered equations."""
         from .._device import resolve_device
         from ..core import _sr_engine as engine
@@ -178,14 +196,24 @@ class SymbolicRegressor:
         xcol = X.T  # engine expects [n_features, n_samples]
         (xtr, ytr), (xva, yva), _ = engine.split_data(xcol, y, seed=seed)
         best, archive = engine.evolve(
-            xtr, ytr, xva, yva, primset, device,
-            pop_size=self.population_size, generations=self.generations,
-            max_len=self.max_size, max_depth=self.max_depth,
-            cw=self.parsimony_coefficient, n_islands=self.n_islands,
+            xtr,
+            ytr,
+            xva,
+            yva,
+            primset,
+            device,
+            pop_size=self.population_size,
+            generations=self.generations,
+            max_len=self.max_size,
+            max_depth=self.max_depth,
+            cw=self.parsimony_coefficient,
+            n_islands=self.n_islands,
             migration_interval=self.migration_interval,
             restart_patience=self.restart_patience,
             const_opt_interval=self.const_opt_interval,
-            time_budget=self.max_time, seed=seed, verbose=bool(self.verbose),
+            time_budget=self.max_time,
+            seed=seed,
+            verbose=bool(self.verbose),
         )
 
         self._ps = primset
@@ -208,7 +236,7 @@ class SymbolicRegressor:
     def _entry(self, index: int | None) -> dict[str, Any]:
         return self._best if index is None else self._archive[index]
 
-    def predict(self, X: "ArrayLike", index: int | None = None) -> "NDArray[np.float64]":
+    def predict(self, X: ArrayLike, index: int | None = None) -> NDArray[np.float64]:
         """Predict with the best equation (or Pareto entry ``index``)."""
         import torch
 
@@ -222,7 +250,7 @@ class SymbolicRegressor:
         pred = entry["a"] * yhat[0] + entry["b"]
         return pred.detach().cpu().numpy().astype(np.float64)
 
-    def score(self, X: "ArrayLike", y: "ArrayLike", sample_weight: Any = None) -> float:
+    def score(self, X: ArrayLike, y: ArrayLike, sample_weight: Any = None) -> float:
         """Return the :math:`R^2` of the best equation on ``(X, y)``."""
         y = np.asarray(y, dtype=np.float64).ravel()
         pred = self.predict(X)
@@ -238,7 +266,7 @@ class SymbolicRegressor:
         """Best (or ``index``-th) equation as LaTeX."""
         return Equation(self._entry(index), self._ps).to_latex()
 
-    def to_numpy_func(self, index: int | None = None) -> Callable[..., "NDArray[np.float64]"]:
+    def to_numpy_func(self, index: int | None = None) -> Callable[..., NDArray[np.float64]]:
         """Compile the equation to a pure-NumPy callable ``f(X)`` (no torch)."""
         import sympy as sp
 
@@ -246,7 +274,7 @@ class SymbolicRegressor:
         xs = sp.symbols(f"x0:{self.n_features_in_}")
         fn = sp.lambdify(xs, expr, "numpy")
 
-        def predict(X: "ArrayLike") -> "NDArray[np.float64]":
+        def predict(X: ArrayLike) -> NDArray[np.float64]:
             arr = np.asarray(X, dtype=np.float64)
             return np.asarray(fn(*[arr[:, i] for i in range(arr.shape[1])]), dtype=np.float64)
 

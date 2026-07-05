@@ -21,8 +21,11 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     data = np.loadtxt(args.csv, delimiter=",", skiprows=1)
     X, y = data[:, :-1], data[:, -1]
     model = SymbolicRegressor(
-        population_size=args.pop, generations=args.generations,
-        max_time=args.max_time, device=args.device, verbose=1,
+        population_size=args.pop,
+        generations=args.generations,
+        max_time=args.max_time,
+        device=args.device,
+        verbose=1,
     )
     model.fit(X, y)
     print(f"R^2(test) = {model.score(X, y):.4f}")
@@ -40,7 +43,9 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``evozero`` console script."""
-    parser = argparse.ArgumentParser(prog="evozero", description="GPU-native evolutionary computation.")
+    parser = argparse.ArgumentParser(
+        prog="evozero", description="GPU-native evolutionary computation."
+    )
     parser.add_argument("--version", action="store_true", help="print version and exit")
     sub = parser.add_subparsers(dest="command")
 

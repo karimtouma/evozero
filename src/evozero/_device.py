@@ -14,7 +14,7 @@ _logger = logging.getLogger("evozero")
 _warned = False
 
 
-def resolve_device(requested: str = "auto") -> "torch.device":
+def resolve_device(requested: str = "auto") -> torch.device:
     """Resolve a device string to a concrete :class:`torch.device`.
 
     Parameters

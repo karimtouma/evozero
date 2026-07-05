@@ -25,9 +25,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def toy_regression() -> tuple[np.ndarray, np.ndarray]:
-    """A small, exactly-recoverable regression problem."""
+    """A small, exactly-recoverable regression problem (deterministic, read-only)."""
     rng = np.random.default_rng(0)
     X = rng.uniform(-2, 2, size=(200, 2)).astype(np.float64)
     y = X[:, 0] ** 2 + X[:, 0] * X[:, 1] + np.sin(X[:, 1])

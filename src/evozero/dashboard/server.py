@@ -22,9 +22,7 @@ def set_state(state: dict[str, Any]) -> None:
 def _index_html() -> bytes:
     # Works from a wheel, zip, or editable install; never uses __file__ paths.
     return (
-        importlib.resources.files("evozero.dashboard")
-        .joinpath("_static/index.html")
-        .read_bytes()
+        importlib.resources.files("evozero.dashboard").joinpath("_static/index.html").read_bytes()
     )
 
 
@@ -39,7 +37,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
+    def do_GET(self) -> None:
+        """Serve the dashboard HTML at ``/`` and the JSON metrics at ``/state``."""
         if self.path.startswith("/state"):
             with _LOCK:
                 body = json.dumps(_STATE).encode()
@@ -47,5 +46,5 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             self._send(_index_html(), "text/html; charset=utf-8")
 
-    def log_message(self, *args: Any) -> None:  # silence stdlib logging
-        pass
+    def log_message(self, *args: Any) -> None:
+        """Silence the stdlib request logging."""

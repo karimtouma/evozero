@@ -18,14 +18,14 @@ except ImportError:  # pragma: no cover - source checkout without build metadata
     __version__ = "0.0.0+unknown"
 
 __all__ = [
-    "SymbolicRegressor",
-    "Equation",
-    "LearnerSearch",
-    "EvolvedLearner",
-    "Task",
-    "launch_dashboard",
     "DashboardHandle",
+    "Equation",
+    "EvolvedLearner",
+    "LearnerSearch",
+    "SymbolicRegressor",
+    "Task",
     "__version__",
+    "launch_dashboard",
 ]
 
 _LAZY = {

@@ -4,4 +4,4 @@ from __future__ import annotations
 
 from .estimator import Equation, SymbolicRegressor
 
-__all__ = ["SymbolicRegressor", "Equation"]
+__all__ = ["Equation", "SymbolicRegressor"]

@@ -9,7 +9,7 @@ from typing import Any
 
 from .server import DashboardHandler, set_state
 
-__all__ = ["launch_dashboard", "DashboardHandle"]
+__all__ = ["DashboardHandle", "launch_dashboard"]
 
 
 class DashboardHandle:
@@ -32,11 +32,15 @@ class DashboardHandle:
         self._server.shutdown()
         self._server.server_close()
 
-    def __enter__(self) -> "DashboardHandle":
+    def __enter__(self) -> DashboardHandle:
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None,
-                 tb: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.stop()
 
 

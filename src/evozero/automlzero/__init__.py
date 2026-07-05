@@ -14,7 +14,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
-__all__ = ["LearnerSearch", "EvolvedLearner", "Task"]
+__all__ = ["EvolvedLearner", "LearnerSearch", "Task"]
 
 _DIMS = (4, 4, 4)  # (n_scalars, n_vectors, n_per_example) registers
 
@@ -22,8 +22,9 @@ _DIMS = (4, 4, 4)  # (n_scalars, n_vectors, n_per_example) registers
 class Task:
     """A single meta-training task ``(X, y)`` split into train/val internally."""
 
-    def __init__(self, X: "ArrayLike", y: "ArrayLike", *, val_fraction: float = 0.3,
-                 random_state: int = 0) -> None:
+    def __init__(
+        self, X: ArrayLike, y: ArrayLike, *, val_fraction: float = 0.3, random_state: int = 0
+    ) -> None:
         X = np.asarray(X, dtype=np.float32)
         y = np.asarray(y, dtype=np.float32).ravel()
         y = y - y.mean()  # the VM has no bias term; center the target
@@ -37,22 +38,25 @@ class Task:
         import torch
 
         return (
-            torch.tensor(self.Xtr, device=device), torch.tensor(self.ytr, device=device),
-            torch.tensor(self.Xval, device=device), torch.tensor(self.yval, device=device),
+            torch.tensor(self.Xtr, device=device),
+            torch.tensor(self.ytr, device=device),
+            torch.tensor(self.Xval, device=device),
+            torch.tensor(self.yval, device=device),
         )
 
 
 class EvolvedLearner:
     """A discovered learning algorithm; a reusable ``fit``/``predict`` estimator."""
 
-    def __init__(self, algo: dict[str, Any], device: Any, steps: int = 30,
-                 dims: tuple[int, int, int] = _DIMS) -> None:
+    def __init__(
+        self, algo: dict[str, Any], device: Any, steps: int = 30, dims: tuple[int, int, int] = _DIMS
+    ) -> None:
         self._algo = algo
         self._device = device
         self._steps = steps
         self._nS, self._nV, self._nP = dims
 
-    def fit(self, X: "ArrayLike", y: "ArrayLike") -> "EvolvedLearner":
+    def fit(self, X: ArrayLike, y: ArrayLike) -> EvolvedLearner:
         """Train from scratch on ``(X, y)`` using the evolved ``Learn`` rule."""
         import torch
 
@@ -68,7 +72,7 @@ class EvolvedLearner:
         self._S, self._V = mem.S.clone(), mem.V.clone()
         return self
 
-    def predict(self, X: "ArrayLike") -> "NDArray[np.float64]":
+    def predict(self, X: ArrayLike) -> NDArray[np.float64]:
         """Predict with the learned weights."""
         import torch
 
@@ -77,8 +81,7 @@ class EvolvedLearner:
         X = torch.tensor(np.asarray(X, dtype=np.float32), device=self._device)
         mem = az.Mem(self._nS, self._nV, self._nP, X.shape[1], X.shape[0], self._device)
         mem.S, mem.V = self._S.clone(), self._V.clone()
-        az.run(self._algo["predict"], mem, X, X.new_zeros(X.shape[0]),
-               self._nS, self._nV, self._nP)
+        az.run(self._algo["predict"], mem, X, X.new_zeros(X.shape[0]), self._nS, self._nV, self._nP)
         return mem.P[az.OUT_P].detach().cpu().numpy().astype(np.float64)
 
     def to_python_source(self) -> str:
@@ -117,9 +120,17 @@ class LearnerSearch:
     best_score_ : float
     """
 
-    def __init__(self, *, population_size: int = 200, n_meta_generations: int = 400,
-                 steps: int = 30, max_time: float | None = None, device: str = "auto",
-                 random_state: int | None = None, verbose: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        population_size: int = 200,
+        n_meta_generations: int = 400,
+        steps: int = 30,
+        max_time: float | None = None,
+        device: str = "auto",
+        random_state: int | None = None,
+        verbose: int = 0,
+    ) -> None:
         self.population_size = population_size
         self.n_meta_generations = n_meta_generations
         self.steps = steps
@@ -128,7 +139,7 @@ class LearnerSearch:
         self.random_state = random_state
         self.verbose = verbose
 
-    def fit(self, tasks: "list[Task]") -> "LearnerSearch":
+    def fit(self, tasks: list[Task]) -> LearnerSearch:
         """Meta-evolve a learning algorithm on ``tasks``."""
         from .._device import resolve_device
         from ..core import _automlzero_engine as az
@@ -139,9 +150,15 @@ class LearnerSearch:
         # hold out the last task for generalization reporting (or reuse all if few)
         test = converted[-1:] if len(converted) > 2 else converted
         best, _hof = az.evolve(
-            converted, test, device, T=self.steps,
-            pop_size=self.population_size, generations=self.n_meta_generations,
-            time_budget=self.max_time, seed=seed, verbose=bool(self.verbose),
+            converted,
+            test,
+            device,
+            T=self.steps,
+            pop_size=self.population_size,
+            generations=self.n_meta_generations,
+            time_budget=self.max_time,
+            seed=seed,
+            verbose=bool(self.verbose),
         )
         self.best_score_ = float(best[0])
         self.best_program_ = EvolvedLearner(best[1], device, steps=self.steps)

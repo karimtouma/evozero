@@ -102,6 +102,9 @@ line-length = 100
 target-version = "py310"
 src = ["src", "tests"]
 
+[tool.ruff.format]
+exclude = ["src/evozero/core/_*_engine.py"]  # vendored engines: keep verbatim
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RET", "PTH", "NPY", "PERF", "RUF", "D"]
 ignore = ["D105", "D107", "D203", "D213"]
@@ -116,7 +119,9 @@ convention = "numpy"
 
 # ─────────────────────────── mypy ───────────────────────────
 [tool.mypy]
-python_version = "3.10"
+# 3.12 so mypy accepts numpy 2.x's PEP 695 stubs; the code itself targets 3.10+
+# via `from __future__ import annotations`.
+python_version = "3.12"
 strict = true
 files = ["src/evozero"]
 exclude = ["src/evozero/core/_.*_engine.py"]
@@ -124,6 +129,13 @@ exclude = ["src/evozero/core/_.*_engine.py"]
 [[tool.mypy.overrides]]
 module = ["torch.*", "sympy.*", "pandas.*", "sklearn.*"]
 ignore_missing_imports = true
+
+# The sr/automlzero facades call into the vendored, intentionally-untyped GPU
+# engine in evozero.core; allow those calls without weakening strictness elsewhere.
+[[tool.mypy.overrides]]
+module = ["evozero.sr.estimator", "evozero.automlzero"]
+disallow_untyped_calls = false
+warn_return_any = false
 
 # ─────────────────────────── pytest ───────────────────────────
 [tool.pytest.ini_options]
@@ -142,4 +154,5 @@ source = ["evozero"]
 omit = ["*/_version.py", "*/core/_*_engine.py"]
 
 [tool.coverage.report]
+fail_under = 85
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@overload"]
