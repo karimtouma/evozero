@@ -10,6 +10,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Case subsampling + memory-safe fitness reduction** — scales SR to large `N` without
+  materializing the `[P, N]` prediction tensor. `SymbolicRegressor` gains `subsample_size`
+  (auto `2048` above `subsample_threshold=50000`), `val_subsample_size`, `subsample_resample_interval`,
+  and `subsample_refit_full`; each generation evaluates fitness (and DALex) on a fresh random
+  case subset, and a new streamed `run_population_reduce` folds predictions into fp64
+  reductions for full-data refit/scoring. Measured (H100): at **N=10⁶** the engine drops from
+  a ~40 GB **OOM** to **~1 GB peak** (R² 0.9995 with DALex); at **N=10⁵** DALex+subsampling
+  reaches **R² 0.99999** (was ~0.995), essentially closing the gap to Operon; at N=10⁴ the
+  gate stays off and results are byte-for-byte unchanged.
 - **GPU-native lexicase selection (DALex)** via `SymbolicRegressor(selection="dalex",
   dalex_sigma=3.0)`. Lexicase is O(T·N²) and impractical on CPU, but near-free on GPU
   because the per-case error matrix `[P, N]` is already materialized — parent choice

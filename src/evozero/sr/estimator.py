@@ -107,6 +107,25 @@ class SymbolicRegressor:
         Particularity pressure for ``selection="dalex"`` (softmax temperature of the
         random case weights). Higher values concentrate selection on fewer cases
         (stronger lexicase behavior); lower values approach mean-error selection.
+    subsample_size : int or None, default=None
+        Number of training cases used to evaluate fitness each generation when the
+        training set is large (``>= subsample_threshold``). ``None`` means auto
+        (``2048``). This is what lets the engine scale to ``N >= 1e5`` without
+        materializing the ``[P, N]`` prediction tensor; below the threshold the full
+        data is used and behavior is unchanged. Exported models' linear-scaling
+        coefficients are re-fit on the full training set (see ``subsample_refit_full``).
+    val_subsample_size : int, default=8192
+        Number of validation cases (drawn once, fixed) used for model selection when
+        subsampling is active — a stationary yardstick for the best/Pareto choice.
+    subsample_threshold : int, default=50000
+        Training-set size at/above which case subsampling activates. Set very large to
+        force full-data evaluation regardless of ``N``.
+    subsample_resample_interval : int, default=1
+        Redraw the training subsample every this many generations (``1`` = every gen).
+    subsample_refit_full : bool, default=True
+        Re-fit the linear-scaling coefficients of the exported models on the full
+        training set at the end of the search (memory-safe, streamed), so ``predict``
+        uses full-data coefficients rather than subsample-fit ones.
     device : str, default="auto"
         ``"auto" | "cpu" | "cuda" | "cuda:N" | "mps"``.
     random_state : int or None, default=None
@@ -140,6 +159,11 @@ class SymbolicRegressor:
         const_opt_interval: int = 5,
         selection: str = "tournament",
         dalex_sigma: float = 3.0,
+        subsample_size: int | None = None,
+        val_subsample_size: int = 8192,
+        subsample_threshold: int = 50000,
+        subsample_resample_interval: int = 1,
+        subsample_refit_full: bool = True,
         device: str = "auto",
         random_state: int | None = None,
         verbose: int = 0,
@@ -158,6 +182,11 @@ class SymbolicRegressor:
         self.const_opt_interval = const_opt_interval
         self.selection = selection
         self.dalex_sigma = dalex_sigma
+        self.subsample_size = subsample_size
+        self.val_subsample_size = val_subsample_size
+        self.subsample_threshold = subsample_threshold
+        self.subsample_resample_interval = subsample_resample_interval
+        self.subsample_refit_full = subsample_refit_full
         self.device = device
         self.random_state = random_state
         self.verbose = verbose
@@ -181,6 +210,11 @@ class SymbolicRegressor:
                 "const_opt_interval",
                 "selection",
                 "dalex_sigma",
+                "subsample_size",
+                "val_subsample_size",
+                "subsample_threshold",
+                "subsample_resample_interval",
+                "subsample_refit_full",
                 "device",
                 "random_state",
                 "verbose",
@@ -230,6 +264,11 @@ class SymbolicRegressor:
             const_opt_interval=self.const_opt_interval,
             selection=self.selection,
             dalex_sigma=self.dalex_sigma,
+            subsample_size=(self.subsample_size if self.subsample_size is not None else 2048),
+            val_subsample_size=self.val_subsample_size,
+            subsample_threshold=self.subsample_threshold,
+            subsample_resample_interval=self.subsample_resample_interval,
+            subsample_refit_full=self.subsample_refit_full,
             time_budget=self.max_time,
             seed=seed,
             verbose=bool(self.verbose),

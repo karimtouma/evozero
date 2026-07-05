@@ -479,6 +479,69 @@ def run_population(codes, consts, X, ps, device, chunk=512):
 
 
 @torch.no_grad()
+def run_population_reduce(codes, consts, X, y, ps, device, a=None, b=None, chunk_n=None):
+    """Memory-safe fitness over FULL data: tiles the N (case) axis and folds each
+    yhat tile into streaming reductions, so the [P, N] prediction tensor is never
+    materialized (this is the fix for the large-N OOM). Reuses the validated
+    ``run_population`` interpreter per tile, so the interpreter itself is untouched.
+
+    ``a, b is None`` -> FIT mode: returns the Keijzer linear-scaling (a, b) fit on the
+    full data (closed form). Otherwise SCORE mode: scores with the supplied (a, b).
+    Returns ``(a, b, mse, r2)`` as GPU float32 ``[P]`` tensors, matching fit_ab/score_ab.
+
+    Numerics: raw moments and residuals accumulate in float64 (predictions are clamped
+    to +/-1e6 -> f^2 up to 1e12); MSE uses direct residual accumulation
+    ``sum((a*f + b - y)^2)`` (not the expanded-moment form) to avoid catastrophic
+    cancellation, and is guarded exactly like score_ab (clamp >= 0, non-finite -> 1e18).
+    """
+    P = codes.shape[0]
+    N = X.shape[1]
+    if chunk_n is None:
+        # bound the returned [P, chunk_n] fp32 tile to ~2 GB (run_population still chunks
+        # P internally for its own interpreter stack; this only caps the tile it returns).
+        chunk_n = max(1, min(N, 2_000_000_000 // (max(P, 1) * 4)))
+    y = y.to(torch.float64)
+    n = float(N)
+    Sy = y.sum()
+    Syy = (y * y).sum()
+    ybar = Sy / n
+    vary = Syy / n - ybar * ybar + 1e-12
+
+    if a is None or b is None:                       # FIT mode: pass 1 = raw moments
+        Sf = torch.zeros(P, dtype=torch.float64, device=device)
+        Sff = torch.zeros(P, dtype=torch.float64, device=device)
+        Sfy = torch.zeros(P, dtype=torch.float64, device=device)
+        for s in range(0, N, chunk_n):
+            e = min(N, s + chunk_n)
+            f = run_population(codes, consts, X[:, s:e], ps, device).to(torch.float64)
+            Sf += f.sum(dim=1)
+            Sff += (f * f).sum(dim=1)
+            Sfy += (f * y[s:e].unsqueeze(0)).sum(dim=1)
+            del f
+        fbar = Sf / n
+        Sxx = Sff - Sf * Sf / n
+        Sxy = Sfy - Sf * Sy / n
+        ok = Sxx > n * 1e-12                          # == fit_ab's var = Sxx/n > 1e-12
+        a = torch.where(ok, Sxy / Sxx, torch.zeros_like(Sxx))
+        b = ybar - a * fbar
+    else:
+        a = a.to(torch.float64)
+        b = b.to(torch.float64)
+
+    SSE = torch.zeros(P, dtype=torch.float64, device=device)   # residual-accumulation pass
+    for s in range(0, N, chunk_n):
+        e = min(N, s + chunk_n)
+        f = run_population(codes, consts, X[:, s:e], ps, device).to(torch.float64)
+        res = a.unsqueeze(1) * f + b.unsqueeze(1) - y[s:e].unsqueeze(0)
+        SSE += (res * res).sum(dim=1)
+        del f, res
+    mse = (SSE / n).clamp_min(0.0)
+    mse = torch.where(torch.isfinite(mse), mse, torch.full_like(mse, 1e18))
+    r2 = 1.0 - mse / vary
+    return a.to(torch.float32), b.to(torch.float32), mse.to(torch.float32), r2.to(torch.float32)
+
+
+@torch.no_grad()
 def fit_ab(yhat, y):
     ybar = y.mean()
     yc = y - ybar
@@ -727,6 +790,8 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
            n_islands=6, migration_interval=8, n_migrants=6, restart_patience=30,
            const_opt_interval=5, const_opt_top=48, const_opt_trials=48,
            selection="tournament", dalex_sigma=3.0,
+           subsample_size=2048, val_subsample_size=8192, subsample_threshold=50000,
+           subsample_resample_interval=1, subsample_refit_full=True,
            on_generation=None, gen_delay=0.0, verbose=True):
     rng = np.random.default_rng(seed)
     Xtr_t = torch.from_numpy(Xtr.astype(np.float32)).to(device)
@@ -740,6 +805,23 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
     else:
         Xval_t = yval_t = None
         vary_val = vary_tr
+
+    # --- CASE SUBSAMPLING (memory-safe fitness for large N; OFF below threshold) ---
+    # Below the gate every *_cur is the full tensor and the executed code path is
+    # behaviorally identical to no-subsampling. The train subset is re-drawn each gen
+    # (down-sampled-lexicase diversity); the val subset is drawn ONCE (fixed seeded)
+    # so best/Pareto/const-opt acceptance sit on a stationary yardstick.
+    Ntr = Xtr_t.shape[1]
+    use_sub = subsample_size is not None and Ntr >= subsample_threshold
+    Xtr_cur, ytr_cur, vary_tr_cur = Xtr_t, ytr_t, vary_tr
+    Xval_cur, yval_cur, vary_val_cur = Xval_t, yval_t, vary_val
+    if use_sub and has_val:
+        Nval = Xval_t.shape[1]
+        vgen = torch.Generator(device=device).manual_seed(seed + 1)
+        vidx = torch.randperm(Nval, generator=vgen, device=device)[:min(val_subsample_size, Nval)]
+        Xval_cur = Xval_t[:, vidx]
+        yval_cur = yval_t[vidx]
+        vary_val_cur = float(((yval_cur - yval_cur.mean()) ** 2).mean()) + 1e-12
 
     def maybe_simplify(ind):
         if not do_simplify:
@@ -760,11 +842,11 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
 
     def eval_flat(flat, return_yhat=False):
         codes, consts, _ = batch_postfix(flat, ps)
-        yh = run_population(codes, consts, Xtr_t, ps, device)
-        a, b, mse_tr, r2_tr = fit_ab(yh, ytr_t)
+        yh = run_population(codes, consts, Xtr_cur, ps, device)
+        a, b, mse_tr, r2_tr = fit_ab(yh, ytr_cur)
         if has_val:
-            yhv = run_population(codes, consts, Xval_t, ps, device)
-            mse_val, r2_val = score_ab(yhv, yval_t, a, b)
+            yhv = run_population(codes, consts, Xval_cur, ps, device)
+            mse_val, r2_val = score_ab(yhv, yval_cur, a, b)
         else:
             mse_val, r2_val = mse_tr, r2_tr
         base = (a.cpu().numpy(), b.cpu().numpy(), mse_tr.cpu().numpy(), r2_tr.cpu().numpy(),
@@ -795,10 +877,19 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
             bounds.append((len(flat), len(flat) + len(isl)))
             flat.extend(isl)
 
+        if use_sub and gen % subsample_resample_interval == 0:
+            # independent per-gen RNG: never advances the numpy GP stream, so the
+            # small-N (gate-off) trajectory stays byte-for-byte reproducible.
+            tgen = torch.Generator(device=device).manual_seed(seed * 1_000_003 + gen)
+            tidx = torch.randperm(Ntr, generator=tgen, device=device)[:min(subsample_size, Ntr)]
+            Xtr_cur = Xtr_t[:, tidx]
+            ytr_cur = ytr_t[tidx]
+            vary_tr_cur = float(((ytr_cur - ytr_cur.mean()) ** 2).mean()) + 1e-12
+
         if selection == "dalex":
             (a_np, b_np, mse_tr_np, r2_tr_np, mse_val_np, r2_val_np,
              a_t, b_t, yh_t) = eval_flat(flat, return_yhat=True)
-            Efull = (a_t.unsqueeze(1) * yh_t + b_t.unsqueeze(1) - ytr_t.unsqueeze(0)) ** 2  # [P,N]
+            Efull = (a_t.unsqueeze(1) * yh_t + b_t.unsqueeze(1) - ytr_cur.unsqueeze(0)) ** 2  # [P,S]
         else:
             a_np, b_np, mse_tr_np, r2_tr_np, mse_val_np, r2_val_np = eval_flat(flat)
             Efull = None
@@ -807,8 +898,8 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
         nest = np.array([nested_transcendental_count(c, ps) for c, _ in flat], dtype=np.float64)
         dim_ok = (np.array([units_consistent(c, ps, var_units, ndim) for c, _ in flat], bool)
                   if var_units is not None else np.ones(len(flat), bool))
-        nmse_tr = mse_tr_np / vary_tr
-        gap = np.maximum(0.0, mse_val_np / vary_val - nmse_tr)
+        nmse_tr = mse_tr_np / vary_tr_cur
+        gap = np.maximum(0.0, mse_val_np / vary_val_cur - nmse_tr)
         cw_arr = np.empty(len(flat))
         for j, (s, e) in enumerate(bounds):
             cw_arr[s:e] = cw * cw_mult[j]
@@ -829,7 +920,7 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
         # --- OPTIMIZACION DE CONSTANTES sobre los mejores (palanca de R2) ---
         if const_opt_interval and gen % const_opt_interval == 0:
             order = np.argsort(eff_val)[:min(const_opt_top, len(flat))]
-            opt = local_optimize_constants([flat[i] for i in order], ps, Xtr_t, ytr_t, device)
+            opt = local_optimize_constants([flat[i] for i in order], ps, Xtr_cur, ytr_cur, device)
             ao, bo, mto, rto, mvo, rvo = eval_flat(opt)
             for idx, pos in enumerate(order):
                 if mvo[idx] < eff_val[pos] - 1e-12:
@@ -933,6 +1024,18 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
             new_islands.append(newpop[:len(isl)])
         islands = new_islands
 
+    # --- FULL-DATA REFIT of linear scaling (a, b) for EXPORTED models ---
+    # During subsampling, archive/best store a,b fit on a per-gen S-case subset; predict()
+    # applies them to full data, so re-fit them on FULL train (memory-safe, amortized once).
+    if subsample_refit_full and use_sub and archive:
+        ents = archive + ([best] if best is not None else [])
+        rcodes, rconsts, _ = batch_postfix([(d["code"], d["const"]) for d in ents], ps)
+        af, bf, _, rtf = run_population_reduce(rcodes, rconsts, Xtr_t, ytr_t, ps, device)
+        for i, d in enumerate(ents):
+            d["a"] = float(af[i])
+            d["b"] = float(bf[i])
+            d["r2_tr"] = float(rtf[i])
+
     return best, archive
 
 
@@ -1015,10 +1118,9 @@ def score_models_on(entries, X_np, y_np, ps, device):
     X_t = torch.from_numpy(X_np.astype(np.float32)).to(device)
     y_t = torch.from_numpy(y_np.astype(np.float32)).to(device)
     codes, consts, _ = batch_postfix([(d["code"], d["const"]) for d in entries], ps)
-    yhat = run_population(codes, consts, X_t, ps, device)
     a = torch.tensor([d["a"] for d in entries], dtype=torch.float32, device=device)
     b = torch.tensor([d["b"] for d in entries], dtype=torch.float32, device=device)
-    _, r2 = score_ab(yhat, y_t, a, b)
+    _, _, _, r2 = run_population_reduce(codes, consts, X_t, y_t, ps, device, a=a, b=b)
     r2 = r2.cpu().numpy()
     for i, d in enumerate(entries):
         d["r2_test"] = float(r2[i])

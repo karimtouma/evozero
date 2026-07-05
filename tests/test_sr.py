@@ -95,6 +95,64 @@ def test_get_set_params() -> None:
     assert model.population_size == 456
 
 
+def test_reduce_matches_full_path() -> None:
+    # run_population_reduce (streamed, memory-safe) must match the full [P,N] fit_ab /
+    # score_ab path it replaces at large N -- FIT mode and SCORE mode, to fp32 tolerance.
+    import torch
+
+    from evozero.core import _sr_engine as engine
+
+    dev = torch.device("cpu")
+    rng = np.random.default_rng(0)
+    ps = engine.PrimSet(2, ["sin", "cos"], ["add", "sub", "mul"], named=[])
+    pop = []
+    while len(pop) < 120:
+        c, k = engine.gen_tree(ps, int(rng.integers(2, 5)), "grow", rng)
+        c, k = engine.simplify_prefix(c, k, ps)
+        if engine._ok_size(c, ps, 40, 9):
+            pop.append((c, k))
+    n = 4096
+    x = rng.uniform(-3, 3, size=(n, 2))
+    y = x[:, 0] ** 2 + x[:, 0] * x[:, 1] + np.sin(x[:, 1])
+    xt = torch.tensor(x.T, dtype=torch.float32, device=dev)
+    yt = torch.tensor(y, dtype=torch.float32, device=dev)
+    codes, consts, _ = engine.batch_postfix(pop, ps)
+
+    yh = engine.run_population(codes, consts, xt, ps, dev)
+    a0, b0, _, r20 = engine.fit_ab(yh, yt)
+    a1, b1, mse1, r21 = engine.run_population_reduce(codes, consts, xt, yt, ps, dev, chunk_n=512)
+    assert (a0 - a1).abs().max() < 1e-4
+    assert (b0 - b1).abs().max() < 1e-4
+    assert (r20 - r21).abs().max() < 1e-4
+    _, r2_s = engine.score_ab(yh, yt, a0, b0)
+    _, _, _, r22 = engine.run_population_reduce(
+        codes, consts, xt, yt, ps, dev, a=a0, b=b0, chunk_n=512
+    )
+    assert (r2_s - r22).abs().max() < 1e-4
+    # honesty invariants: streamed reduction never reports r2>1 or negative mse
+    assert not bool((r21 > 1 + 1e-5).any())
+    assert not bool((mse1 < 0).any())
+
+
+def test_case_subsampling_fits_and_is_inert_when_gated_off(toy_regression) -> None:
+    # Forcing the subsample gate on (threshold=0) must still fit; and with the default
+    # threshold on small data it must be inert (identical to not passing subsample_size).
+    X, y = toy_regression
+    common = {
+        "population_size": 500,
+        "generations": 25,
+        "n_islands": 3,
+        "device": "cpu",
+        "random_state": 0,
+    }
+    forced = SymbolicRegressor(subsample_size=256, subsample_threshold=0, **common).fit(X, y)
+    assert forced.score(X, y) > 0.9  # full-data refit keeps predict accurate
+
+    base = SymbolicRegressor(**common).fit(X, y)
+    inert = SymbolicRegressor(subsample_size=256, **common).fit(X, y)  # gated off (N < 50k)
+    assert str(base.best_equation_) == str(inert.best_equation_)
+
+
 def test_dalex_selection_fits(toy_regression) -> None:
     # GPU-native lexicase selection must run end-to-end and be sklearn-round-trippable
     # even on CPU (the [P, N] matmul path just runs on the CPU tensor there).
