@@ -10,6 +10,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **GPU-native lexicase selection (DALex)** via `SymbolicRegressor(selection="dalex",
+  dalex_sigma=3.0)`. Lexicase is O(T·N²) and impractical on CPU, but near-free on GPU
+  because the per-case error matrix `[P, N]` is already materialized — parent choice
+  becomes a single `[P, N] @ [N, k]` matmul. Measured (full island engine, constants-heavy
+  target, N=10⁴, 30 s budget, H100): median held-out R² **0.99477 → 0.99924** vs tournament
+  at **+10 % wall-clock**. Still does not beat Operon on pure SR — this is an internal
+  strategy improvement, not a victory claim.
+- `benchmarks/ab_selection.py` — isolated A/B that validated the DALex-vs-tournament lever.
 - `benchmarks/` — an **honest** head-to-head SR benchmark (evozero vs Operon / PySR /
   gplearn) with `BENCHMARK.md`. Finding: evozero ties the CPU tools on small data and
   **loses to Operon at N ≥ 10⁵**; it is not the fastest SR tool.

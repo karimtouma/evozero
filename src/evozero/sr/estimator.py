@@ -96,6 +96,17 @@ class SymbolicRegressor:
         Generations without island improvement before that island restarts.
     const_opt_interval : int, default=5
         Optimize constants of the best models every this many generations (``0`` disables).
+    selection : {"tournament", "dalex"}, default="tournament"
+        Parent-selection operator. ``"tournament"`` is the classic size-``tournament``
+        tournament. ``"dalex"`` is GPU-native lexicase (DALex): each parent is chosen by
+        a randomly weighted aggregation over the per-case error matrix, computed as a
+        single ``[P, N] @ [N, k]`` matmul. Lexicase is O(T·N²) and impractical on CPU,
+        but near-free on GPU since the per-case error tensor is already materialized;
+        it improves fit on problems with many free constants.
+    dalex_sigma : float, default=3.0
+        Particularity pressure for ``selection="dalex"`` (softmax temperature of the
+        random case weights). Higher values concentrate selection on fewer cases
+        (stronger lexicase behavior); lower values approach mean-error selection.
     device : str, default="auto"
         ``"auto" | "cpu" | "cuda" | "cuda:N" | "mps"``.
     random_state : int or None, default=None
@@ -127,6 +138,8 @@ class SymbolicRegressor:
         parsimony_coefficient: float = 0.006,
         restart_patience: int = 30,
         const_opt_interval: int = 5,
+        selection: str = "tournament",
+        dalex_sigma: float = 3.0,
         device: str = "auto",
         random_state: int | None = None,
         verbose: int = 0,
@@ -143,6 +156,8 @@ class SymbolicRegressor:
         self.parsimony_coefficient = parsimony_coefficient
         self.restart_patience = restart_patience
         self.const_opt_interval = const_opt_interval
+        self.selection = selection
+        self.dalex_sigma = dalex_sigma
         self.device = device
         self.random_state = random_state
         self.verbose = verbose
@@ -164,6 +179,8 @@ class SymbolicRegressor:
                 "parsimony_coefficient",
                 "restart_patience",
                 "const_opt_interval",
+                "selection",
+                "dalex_sigma",
                 "device",
                 "random_state",
                 "verbose",
@@ -211,6 +228,8 @@ class SymbolicRegressor:
             migration_interval=self.migration_interval,
             restart_patience=self.restart_patience,
             const_opt_interval=self.const_opt_interval,
+            selection=self.selection,
+            dalex_sigma=self.dalex_sigma,
             time_budget=self.max_time,
             seed=seed,
             verbose=bool(self.verbose),

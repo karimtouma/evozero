@@ -711,12 +711,22 @@ def local_optimize_constants(inds, ps, Xtr_t, ytr_t, device, steps=20):
     return out
 
 
+def _dalex_parents(err, k, sigma, device, rng):
+    """DALex (lexicase-como-un-matmul): err [P,N] error por-caso -> k indices de programa.
+    Casi-gratis en GPU porque `err` ya esta materializado (en CPU es O(T*N^2), prohibitivo)."""
+    n = err.shape[1]
+    g = torch.Generator(device=device).manual_seed(int(rng.integers(1 << 31)))
+    w = torch.softmax(torch.randn(k, n, generator=g, device=device) * sigma, dim=1)  # [k,N]
+    return (err @ w.t()).argmin(dim=0).cpu().numpy()  # [k] mejor programa por evento ponderado
+
+
 def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
            max_len=40, max_depth=9, tournament=6, cx_prob=0.7, mut_prob=0.35,
            elite=4, init_depth=4, cw=0.006, gap_pen=0.5, nest_pen=0.3, seed=0,
            time_budget=None, var_units=None, ndim=0, do_simplify=True,
            n_islands=6, migration_interval=8, n_migrants=6, restart_patience=30,
            const_opt_interval=5, const_opt_top=48, const_opt_trials=48,
+           selection="tournament", dalex_sigma=3.0,
            on_generation=None, gen_delay=0.0, verbose=True):
     rng = np.random.default_rng(seed)
     Xtr_t = torch.from_numpy(Xtr.astype(np.float32)).to(device)
@@ -748,7 +758,7 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
                 return (c, k)
         return maybe_simplify(gen_tree(ps, 2, "grow", rng))
 
-    def eval_flat(flat):
+    def eval_flat(flat, return_yhat=False):
         codes, consts, _ = batch_postfix(flat, ps)
         yh = run_population(codes, consts, Xtr_t, ps, device)
         a, b, mse_tr, r2_tr = fit_ab(yh, ytr_t)
@@ -757,8 +767,9 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
             mse_val, r2_val = score_ab(yhv, yval_t, a, b)
         else:
             mse_val, r2_val = mse_tr, r2_tr
-        return (a.cpu().numpy(), b.cpu().numpy(), mse_tr.cpu().numpy(), r2_tr.cpu().numpy(),
+        base = (a.cpu().numpy(), b.cpu().numpy(), mse_tr.cpu().numpy(), r2_tr.cpu().numpy(),
                 mse_val.cpu().numpy(), r2_val.cpu().numpy())
+        return (*base, a, b, yh) if return_yhat else base
 
     def locate(bounds, pos):
         for j, (s, e) in enumerate(bounds):
@@ -784,7 +795,13 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
             bounds.append((len(flat), len(flat) + len(isl)))
             flat.extend(isl)
 
-        a_np, b_np, mse_tr_np, r2_tr_np, mse_val_np, r2_val_np = eval_flat(flat)
+        if selection == "dalex":
+            (a_np, b_np, mse_tr_np, r2_tr_np, mse_val_np, r2_val_np,
+             a_t, b_t, yh_t) = eval_flat(flat, return_yhat=True)
+            Efull = (a_t.unsqueeze(1) * yh_t + b_t.unsqueeze(1) - ytr_t.unsqueeze(0)) ** 2  # [P,N]
+        else:
+            a_np, b_np, mse_tr_np, r2_tr_np, mse_val_np, r2_val_np = eval_flat(flat)
+            Efull = None
         size = np.array([len(c) for c, _ in flat], dtype=np.float64)
         wc = np.array([weighted_complexity(c, ps) for c, _ in flat], dtype=np.float64)
         nest = np.array([nested_transcendental_count(c, ps) for c, _ in flat], dtype=np.float64)
@@ -886,9 +903,19 @@ def evolve(Xtr, ytr, Xval, yval, ps, device, pop_size=3000, generations=100000,
                 idx = rng.integers(0, len(_isl), size=min(tournament, len(_isl)))
                 return _isl[idx[np.argmin(_fit[idx])]]
 
+            if selection == "dalex" and Efull is not None:
+                _pool = _dalex_parents(Efull[s:e], 2 * len(isl) + 8, dalex_sigma, device, rng)
+
+                def pick(_isl=isl, _pool=_pool, _c=[0]):  # DALex-selected parents (cycled)
+                    v = _isl[int(_pool[_c[0] % len(_pool)])]
+                    _c[0] += 1
+                    return v
+            else:
+                pick = tourney
+
             while len(newpop) < len(isl):
-                child = crossover(tourney(), tourney(), ps, max_len, max_depth, rng) \
-                    if rng.random() < cx_prob else tourney()
+                child = crossover(pick(), pick(), ps, max_len, max_depth, rng) \
+                    if rng.random() < cx_prob else pick()
                 if rng.random() < mut_prob:
                     r = rng.random()
                     if r < 0.4:

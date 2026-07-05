@@ -95,6 +95,26 @@ def test_get_set_params() -> None:
     assert model.population_size == 456
 
 
+def test_dalex_selection_fits(toy_regression) -> None:
+    # GPU-native lexicase selection must run end-to-end and be sklearn-round-trippable
+    # even on CPU (the [P, N] matmul path just runs on the CPU tensor there).
+    X, y = toy_regression
+    model = SymbolicRegressor(
+        population_size=600,
+        generations=40,
+        n_islands=3,
+        selection="dalex",
+        dalex_sigma=3.0,
+        device="cpu",
+        random_state=0,
+    )
+    params = model.get_params()
+    assert params["selection"] == "dalex"
+    assert params["dalex_sigma"] == 3.0
+    model.fit(X, y)
+    assert model.score(X, y) > 0.9  # this target is exactly representable
+
+
 def test_1d_X_raises() -> None:
     model = SymbolicRegressor(device="cpu")
     with pytest.raises(ValueError, match="2-D"):
